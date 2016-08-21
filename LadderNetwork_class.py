@@ -1,4 +1,3 @@
-# python tensorflowTEST.py --trainData trainData.npy --trainLabels trainLabels.npy --testData testData.npy --testLabels testLabels.npy --valData valData.npy --valLabels valLabels.npy
 # tensorboard --logdir=/Users/terry/PycharmProjects/untitled/train/
 import re
 import numpy as np
