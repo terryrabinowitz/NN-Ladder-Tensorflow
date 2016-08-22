@@ -21,14 +21,73 @@ class Ladder(object):
     def get_classes(self):
         return self.numClasses
 
+class ConvLadder(Ladder):
+    def __init__(self, trainData, trainLabels, valData, valLabels, numConv, numFilters, lambdas):
+        Ladder.__init__(self, trainData, trainLabels, valData, valLabels)
+        self.numConv = numConv
+        self.numFilters = numFilters
+        self.lambdas = lambdas
+        if len(self.lambdas) != self.numLayers + 2:
+            print "need lambda for input, output and every convolution layer"
+            exit()
+        self.inputSize = self.trainData.shape[1]
+        self.z = []
+        self.h = []
+        self.z_noise = []
+        self.h_noise = []
+
+    def feed_forward(self, x, y):
+        with tf.variable_scope("feedforward"):
+            print "forward"
+            for i in range(self.numLayers + 2):
+                print i
+                string = 'weight' + str(i)
+                if i == 0:
+                    pass
+                elif i == 1:
+                    W = tf.get_variable(name=string, shape=[self.inputSize, self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
+                elif i == self.numLayers + 1:
+                    W = tf.get_variable(name=string, shape=[self.numHidden[i-2], self.numClasses], initializer=tf.contrib.layers.xavier_initializer())
+                elif i < self.numLayers + 1:
+                    W = tf.get_variable(name=string, shape=[self.numHidden[i-2], self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
+
+                string = 'bias' + str(i)
+                if i == 0:
+                    pass
+                elif i == self.numLayers + 1:
+                    B = tf.get_variable(name=string, shape=[self.numClasses], initializer=tf.constant_initializer(0.1))
+                elif i < self.numLayers + 1:
+                    B = tf.get_variable(name=string, shape=[self.numHidden[i-1]], initializer=tf.constant_initializer(0.1))
+
+                if i == 0:
+                    self.z.append(x)
+                    self.h.append(x)
+                elif i == self.numLayers + 1:
+                    self.z.append(tf.nn.batch_normalization(tf.matmul(self.h[i-1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
+                    self.h.append(tf.nn.sigmoid(tf.add(self.z[i], B)))
+                else:
+                    self.z.append(tf.nn.batch_normalization(tf.matmul(self.h[i-1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
+                    self.h.append(tf.nn.relu(tf.add(self.z[i], B)))
+
+        self.loss_supervised = -tf.reduce_mean(y * tf.log(self.h[self.numLayers + 1]) + (1-y) * tf.log(1-self.h[self.numLayers + 1]))
+        self.train_step_supervised = tf.train.AdamOptimizer(lr).minimize(self.loss_supervised)
+
+
+
 class DenseLadder(Ladder):
-    def __init__(self, trainData, trainLabels, valData, valLabels, numHidden):
+    def __init__(self, trainData, trainLabels, valData, valLabels, numHidden, lambdas):
         Ladder.__init__(self, trainData, trainLabels, valData, valLabels)
         self.numLayers = len(numHidden)
         self.numHidden = numHidden
+        self.lambdas = lambdas
+        if len(self.lambdas) != self.numLayers + 2:
+            print "need lambda for input, output and every hidden layer"
+            exit()
         if self.trainData.ndim > 2:
+            print "reshaping training data"
             self.trainData = np.reshape(self.trainData, [self.numTrain, -1])
         if self.valData.ndim > 2:
+            print "reshaping validation data"
             self.valData = np.reshape(self.valData, [self.numVal, -1])
         self.inputSize = self.trainData.shape[1]
         self.z = []
@@ -39,70 +98,82 @@ class DenseLadder(Ladder):
     def feed_forward(self, x, y):
         with tf.variable_scope("feedforward"):
             print "forward"
-            for i in range(self.numLayers + 1):
+            for i in range(self.numLayers + 2):
                 print i
                 string = 'weight' + str(i)
                 if i == 0:
-                    W = tf.get_variable(name=string, shape=[self.inputSize, self.numHidden[i]], initializer=tf.contrib.layers.xavier_initializer())
-                elif i == self.numLayers:
-                    W = tf.get_variable(name=string, shape=[self.numHidden[i-1], self.numClasses], initializer=tf.contrib.layers.xavier_initializer())
-                else:
-                    W = tf.get_variable(name=string, shape=[self.numHidden[i-1], self.numHidden[i]], initializer=tf.contrib.layers.xavier_initializer())
+                    pass
+                elif i == 1:
+                    W = tf.get_variable(name=string, shape=[self.inputSize, self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
+                elif i == self.numLayers + 1:
+                    W = tf.get_variable(name=string, shape=[self.numHidden[i-2], self.numClasses], initializer=tf.contrib.layers.xavier_initializer())
+                elif i < self.numLayers + 1:
+                    W = tf.get_variable(name=string, shape=[self.numHidden[i-2], self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
 
                 string = 'bias' + str(i)
-                if i == self.numLayers:
+                if i == 0:
+                    pass
+                elif i == self.numLayers + 1:
                     B = tf.get_variable(name=string, shape=[self.numClasses], initializer=tf.constant_initializer(0.1))
-                else:
-                    B = tf.get_variable(name=string, shape=[self.numHidden[i]], initializer=tf.constant_initializer(0.1))
+                elif i < self.numLayers + 1:
+                    B = tf.get_variable(name=string, shape=[self.numHidden[i-1]], initializer=tf.constant_initializer(0.1))
 
                 if i == 0:
-                    self.z.append(tf.nn.batch_normalization(tf.matmul(x, W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
-                    self.h.append(tf.nn.relu(tf.add(self.z[i], B)))
-                elif i == self.numLayers:
+                    self.z.append(x)
+                    self.h.append(x)
+                elif i == self.numLayers + 1:
                     self.z.append(tf.nn.batch_normalization(tf.matmul(self.h[i-1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
                     self.h.append(tf.nn.sigmoid(tf.add(self.z[i], B)))
                 else:
                     self.z.append(tf.nn.batch_normalization(tf.matmul(self.h[i-1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
                     self.h.append(tf.nn.relu(tf.add(self.z[i], B)))
 
-        self.loss_supervised = -tf.reduce_mean(y * tf.log(self.h[self.numLayers]) + (1 - y) * tf.log(1 - self.h[self.numLayers]))
+        self.loss_supervised = -tf.reduce_mean(y * tf.log(self.h[self.numLayers + 1]) + (1-y) * tf.log(1-self.h[self.numLayers + 1]))
         self.train_step_supervised = tf.train.AdamOptimizer(lr).minimize(self.loss_supervised)
 
     def encoder(self, x, y, noiseMean, noiseStdDev):
         with tf.variable_scope("feedforward", reuse=True):
             print "encode"
-            for i in range(self.numLayers + 1):
+            for i in range(self.numLayers + 2):
                 print i
                 string = 'weight' + str(i)
                 if i == 0:
-                    W = tf.get_variable(name=string, shape=[self.inputSize, self.numHidden[i]], initializer=tf.contrib.layers.xavier_initializer())
-                elif i == self.numLayers:
-                    W = tf.get_variable(name=string, shape=[self.numHidden[i - 1], self.numClasses], initializer=tf.contrib.layers.xavier_initializer())
-                else:
-                    W = tf.get_variable(name=string, shape=[self.numHidden[i - 1], self.numHidden[i]], initializer=tf.contrib.layers.xavier_initializer())
+                    pass
+                elif i == 1:
+                    W = tf.get_variable(name=string, shape=[self.inputSize, self.numHidden[i - 1]],
+                                        initializer=tf.contrib.layers.xavier_initializer())
+                elif i == self.numLayers + 1:
+                    W = tf.get_variable(name=string, shape=[self.numHidden[i - 2], self.numClasses],
+                                        initializer=tf.contrib.layers.xavier_initializer())
+                elif i < self.numLayers + 1:
+                    W = tf.get_variable(name=string, shape=[self.numHidden[i - 2], self.numHidden[i - 1]],
+                                        initializer=tf.contrib.layers.xavier_initializer())
 
                 string = 'bias' + str(i)
-                if i == self.numLayers:
+                if i == 0:
+                    pass
+                elif i == self.numLayers + 1:
                     B = tf.get_variable(name=string, shape=[self.numClasses], initializer=tf.constant_initializer(0.1))
-                else:
-                    B = tf.get_variable(name=string, shape=[self.numHidden[i]], initializer=tf.constant_initializer(0.1))
+                elif i < self.numLayers + 1:
+                    B = tf.get_variable(name=string, shape=[self.numHidden[i - 1]],
+                                        initializer=tf.constant_initializer(0.1))
 
                 if i == 0:
                     n = tf.random_normal(shape=tf.shape(x), mean=noiseMean, stddev=noiseStdDev)
-                    x = tf.add(x, n)
-                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(x, W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
-                    n = tf.random_normal(shape=tf.shape(B), mean=noiseMean, stddev=noiseStdDev)
-                    self.h_noise.append(tf.nn.relu(tf.add(self.z[i], tf.add(B, n))))
-                elif i == self.numLayers:
-                    n = tf.random_normal(shape=tf.shape(B), mean=noiseMean, stddev=noiseStdDev)
-                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(self.h_noise[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
-                    self.h_noise.append(tf.nn.sigmoid(tf.add(self.z[i], tf.add(B, n))))
+                    self.z_noise.append(tf.add(x, n))
+                    self.h_noise.append(tf.add(x, n))
+                elif i == self.numLayers + 1:
+                    z_noise = tf.nn.batch_normalization(tf.matmul(self.h_noise[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None)
+                    n = tf.random_normal(shape=tf.shape(z_noise), mean=noiseMean, stddev=noiseStdDev)
+                    self.z_noise.append(tf.add(z_noise, n))
+                    self.h_noise.append(tf.nn.sigmoid(tf.add(self.z_noise[i], B)))
                 else:
-                    n = tf.random_normal(shape=tf.shape(B), mean=noiseMean, stddev=noiseStdDev)
-                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(self.h_noise[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
-                    self.h_noise.append(tf.nn.relu(tf.add(self.z[i], tf.add(B, n))))
+                    z_noise = tf.nn.batch_normalization(tf.matmul(self.h_noise[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None)
+                    n = tf.random_normal(shape=tf.shape(z_noise), mean=noiseMean, stddev=noiseStdDev)
+                    self.z_noise.append(tf.add(z_noise, n))
+                    self.h_noise.append(tf.nn.relu(tf.add(self.z_noise[i], B)))
 
-            lossSupervised_noise = -tf.reduce_mean(y * tf.log(self.h_noise[self.numLayers]) + (1 - y) * tf.log(1 - self.h_noise[self.numLayers]))
+            lossSupervised_noise = -tf.reduce_mean(y * tf.log(self.h_noise[self.numLayers+1]) + (1 - y) * tf.log(1 - self.h_noise[self.numLayers+1]))
             self.loss_supervised_noise = lossSupervised_noise
             self.train_step_supervised_noise = tf.train.AdamOptimizer(lr).minimize(self.loss_supervised_noise)
 
@@ -111,20 +182,30 @@ class DenseLadder(Ladder):
             print "decode"
             self.z_recon = [None]*len(self.z_noise)
             self.diff = tf.constant(0.0,dtype=np.float32)
-            for i in range(self.numLayers, -1, -1):
+            for i in range(self.numLayers+1, -1, -1):
                 print i
+
                 if i == 0:
-                    I = tf.Variable(initial_value=np.ones((batch_size, self.numHidden[i])), dtype=np.float32)
+                    I = tf.Variable(initial_value=np.ones((batch_size, self.inputSize)), dtype=np.float32)
                     string = 'a' + str(i)
-                    a = tf.get_variable(string, shape=[4, self.numHidden[i]], initializer=tf.constant_initializer(1.0))
+                    a = tf.get_variable(string, shape=[4, self.inputSize], initializer=tf.constant_initializer(1.0))
                     string = 'b' + str(i)
-                    b = tf.get_variable(string, shape=[self.numHidden[i]], initializer=tf.constant_initializer(1.0))
+                    b = tf.get_variable(string, shape=[self.inputSize], initializer=tf.constant_initializer(1.0))
                     string = 'c' + str(i)
-                    c = tf.get_variable(string, shape=[4, self.numHidden[i]], initializer=tf.constant_initializer(1.0))
+                    c = tf.get_variable(string, shape=[4, self.inputSize], initializer=tf.constant_initializer(1.0))
+                    mu = tf.nn.batch_normalization(tf.matmul(self.z_recon[i+1], V), mean=0, variance=1, offset=None, scale=None, variance_epsilon=1e-9)
+                elif i == 1:
+                    I = tf.Variable(initial_value=np.ones((batch_size, self.numHidden[i-1])), dtype=np.float32)
+                    string = 'a' + str(i)
+                    a = tf.get_variable(string, shape=[4, self.numHidden[i-1]], initializer=tf.constant_initializer(1.0))
+                    string = 'b' + str(i)
+                    b = tf.get_variable(string, shape=[self.numHidden[i-1]], initializer=tf.constant_initializer(1.0))
+                    string = 'c' + str(i)
+                    c = tf.get_variable(string, shape=[4, self.numHidden[i-1]], initializer=tf.constant_initializer(1.0))
                     mu = tf.nn.batch_normalization(tf.matmul(self.z_recon[i+1], V), mean=0, variance=1, offset=None, scale=None, variance_epsilon=1e-9)
                     string = 'weight' + str(i)
-                    V = tf.get_variable(name=string, shape=[self.numHidden[i], self.inputSize], initializer=tf.contrib.layers.xavier_initializer())
-                elif i == self.numLayers:
+                    V = tf.get_variable(name=string, shape=[self.numHidden[i-1], self.inputSize], initializer=tf.contrib.layers.xavier_initializer())
+                elif i == self.numLayers+1:
                     I = tf.Variable(initial_value=np.ones((batch_size, self.numClasses)), dtype=np.float32)
                     string = 'a' + str(i)
                     a = tf.get_variable(string, shape=[4, self.numClasses], initializer=tf.constant_initializer(1.0))
@@ -134,31 +215,31 @@ class DenseLadder(Ladder):
                     c = tf.get_variable(string, shape=[4, self.numClasses], initializer=tf.constant_initializer(1.0))
                     mu = tf.nn.batch_normalization(self.h_noise[i], mean=0, variance=1, offset=None, scale=None, variance_epsilon=1e-9)
                     string = 'weight' + str(i)
-                    V = tf.get_variable(name=string, shape=[self.numClasses, self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
+                    V = tf.get_variable(name=string, shape=[self.numClasses, self.numHidden[i-2]], initializer=tf.contrib.layers.xavier_initializer())
                 else:
-                    I = tf.Variable(initial_value=np.ones((batch_size, self.numHidden[i])), dtype=np.float32)
+                    I = tf.Variable(initial_value=np.ones((batch_size, self.numHidden[i-1])), dtype=np.float32)
                     string = 'a' + str(i)
-                    a = tf.get_variable(string, shape=[4, self.numHidden[i]], initializer=tf.constant_initializer(1.0))
+                    a = tf.get_variable(string, shape=[4, self.numHidden[i-1]], initializer=tf.constant_initializer(1.0))
                     string = 'b' + str(i)
-                    b = tf.get_variable(string, shape=[self.numHidden[i]], initializer=tf.constant_initializer(1.0))
+                    b = tf.get_variable(string, shape=[self.numHidden[i-1]], initializer=tf.constant_initializer(1.0))
                     string = 'c' + str(i)
-                    c = tf.get_variable(string, shape=[4, self.numHidden[i]], initializer=tf.constant_initializer(1.0))
+                    c = tf.get_variable(string, shape=[4, self.numHidden[i-1]], initializer=tf.constant_initializer(1.0))
                     mu = tf.nn.batch_normalization(tf.matmul(self.z_recon[i+1], V), mean=0, variance=1, offset=None, scale=None, variance_epsilon=1e-9)
                     string = 'weight' + str(i)
-                    V = tf.get_variable(name=string, shape=[self.numHidden[i], self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
+                    V = tf.get_variable(name=string, shape=[self.numHidden[i-1], self.numHidden[i-2]], initializer=tf.contrib.layers.xavier_initializer())
+
+                #print "V", tf.Tensor.get_shape(tf.mul(V, tf.ones(tf.shape(V))))
 
                 e = tf.transpose(tf.pack([I, self.z_noise[i], mu, tf.mul(self.z_noise[i], mu)]), [1, 0, 2])
                 part1 = tf.reduce_sum(tf.mul(a, e), 1)
                 part2 = tf.mul(b, tf.nn.sigmoid(tf.reduce_sum(tf.mul(c, e), 1)))
                 self.z_recon[i] = tf.add(part1, part2)
                 string = 'lambda' + str(i)
-                lam = tf.get_variable(string, shape=[1], initializer=tf.constant_initializer(0.5))
+                lam = self.lambdas[i]
                 self.diff = tf.add(self.diff,tf.div(tf.mul(lam, tf.reduce_sum(tf.squared_difference(self.z[i], self.z_recon[i]))), tf.to_float(tf.shape(self.z[i]))[1]))  # lambda * (sum||(z1-z1_n)||^2 ) / (layerWidth * numSamples)
 
-                #print tf.Tensor.get_shape(tf.mul(self.z_recon[i], tf.ones(tf.shape(self.z_recon[i]))))
-
-        lossUnsupervised_noise = tf.div(self.diff, tf.to_float(tf.shape(self.h_noise[self.numLayers])[0]))
-        self.loss = tf.add(self.lossSupervised_noise, lossUnsupervised_noise)
+        loss_unsupervised_noise = tf.div(self.diff, tf.to_float(tf.shape(self.h_noise[self.numLayers])[0]))
+        self.loss = tf.add(self.loss_supervised_noise, loss_unsupervised_noise)
         self.train_step = tf.train.AdamOptimizer(lr).minimize(self.loss)
 
     def get_loss(self):
@@ -209,85 +290,96 @@ def main(argv=None):
     nnTypes = ['dense','convolution','recurrent']
     nnType = nnTypes[0]
     if nnType.startswith('d'):
-        numHidden = [4000, 2000, 2000, 2000, 2000, 2000, 2000]
+        numHidden = [2000, 2000, 2000, 2000] #the number of nodes in each hidden layer
+        lambdas = [100.0, 10.0, 1.0, 1.0, 1.0, 1.0] #unsupervised loss coefficients:  first index is input layer, last index is output layer, the rest are the hidden layers
         noiseMean = 0.0
         noiseStdDev = 0.3
-
-        L = DenseLadder(train_data, train_labels, val_data, val_labels, numHidden)
+        L = DenseLadder(train_data, train_labels, val_data, val_labels, numHidden, lambdas)
         x = tf.placeholder(tf.float32, shape=[batch_size, L.get_size()])
         y = tf.placeholder(tf.float32, shape=[batch_size, L.get_classes()])
         L.feed_forward(x, y)
         L.encoder(x, y, noiseMean=noiseMean, noiseStdDev=noiseStdDev)
         L.decoder()
-        
-        loss = L.get_loss()
-        #loss = L.get_loss_supervised()
-        #loss = L.get_loss_supervised_noise()
-        train_step = L.get_train_step()
-        #train_step = L.get_train_step_supervised()
-        #train_step = L.get_train_step_supervised_noise()
+        loss = L.get_loss()                                 #ff, encoder, decoder
+        #loss = L.get_loss_supervised()                     #ff
+        #loss = L.get_loss_supervised_noise()               #encoder
+        train_step = L.get_train_step()                     #ff, encoder, decoder
+        #train_step = L.get_train_step_supervised()         #ff
+        #train_step = L.get_train_step_supervised_noise()   #encoder
+    if nnType.startswith('c'):
+        numConv = [500,500,500]
+        numFilters = [(15,4),(10,4),(7,4)]
+        lambdas = [100.0, 10.0, 1.0, 1.0, 1.0] #unsupervised loss coefficients:  first index is input layer, last index is output layer, the rest are the convolution layers
+        noiseMean = 0.0
+        noiseStdDev = 0.3
+        L = ConvLadder(train_data, train_labels, val_data, val_labels, numConv, numFilters, lambdas)
+        x = tf.placeholder(tf.float32, shape=[batch_size, L.get_size()])
+        y = tf.placeholder(tf.float32, shape=[batch_size, L.get_classes()])
+        L.feed_forward(x, y)
 
-        best_val_loss = 10000
-        with tf.Session() as s:
-            saver = tf.train.Saver()
-            tf.initialize_all_variables().run()
 
-            for epoch in xrange(num_epochs):
-                for batch in xrange(0, L.numTrain, batch_size):
-                    if batch + batch_size > L.numTrain:
-                        end = L.numTrain
-                        break
-                    else:
-                        end = batch + batch_size
-                    batch_data = L.trainData[batch:end, :]
-                    batch_labels = L.trainLabels[batch:end]
-                    _, cost = s.run([train_step, loss], feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
-                    #print cost
-                index = 0
-                costT = 0
-                for batch in xrange(0, L.numVal, batch_size):
-                    if batch + batch_size > L.numVal:
-                        end = L.numVal
-                        break
-                    else:
-                        end = batch + batch_size
-                    batch_data = L.valData[batch:end, :]
-                    batch_labels = L.valLabels[batch:end]
-                    cost = s.run(loss, feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
-                    costT += cost
-                    index += 1
-                costT /= index
-                print
-                print "val cost =", costT
-                if costT < best_val_loss:
-                    saver.save(s, model_path)
-                    best_val_loss = costT
+    best_val_loss = 10000
+    print
+    with tf.Session() as s:
+        saver = tf.train.Saver()
+        tf.initialize_all_variables().run()
 
-            print
-            print "Testing..."
-            costT = 0
-            index = 0
-            saver.restore(s, model_path)
-            predictions = []
-            costT = 0
-            for batch in xrange(0, test_data.shape[0], batch_size):
-                if batch + batch_size > test_data.shape[0]:
-                    end = test_data.shape[0]
+        for epoch in xrange(num_epochs):
+            for batch in xrange(0, L.numTrain, batch_size):
+                if batch + batch_size > L.numTrain:
+                    end = L.numTrain
                     break
                 else:
                     end = batch + batch_size
-                batch_data = test_data[batch:end, :]
-                batch_labels = test_labels[batch:end]
-                cost = s.run([loss], feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
-                pred = L.h[L.numLayers].eval(feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
-                print pred[0]
-                predictions.append(pred[0])
-                costT += cost[0]
+                batch_data = L.trainData[batch:end, :]
+                batch_labels = L.trainLabels[batch:end]
+                _, cost = s.run([train_step, loss], feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
+                print cost
+            index = 0
+            costT = 0
+            for batch in xrange(0, L.numVal, batch_size):
+                if batch + batch_size > L.numVal:
+                    end = L.numVal
+                    break
+                else:
+                    end = batch + batch_size
+                batch_data = L.valData[batch:end, :]
+                batch_labels = L.valLabels[batch:end]
+                cost = s.run(loss, feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
+                costT += cost
                 index += 1
             costT /= index
-            predictions = np.asarray(predictions)
-            np.savetxt(predictions_save_path, predictions, fmt="%1.4f")
-            print "test cost =", costT[0]
+            print
+            print "val cost =", costT
+            if costT < best_val_loss:
+                saver.save(s, model_path)
+                best_val_loss = costT
+
+        print
+        print "Testing..."
+        costT = 0
+        index = 0
+        saver.restore(s, model_path)
+        predictions = []
+        costT = 0
+        for batch in xrange(0, test_data.shape[0], batch_size):
+            if batch + batch_size > test_data.shape[0]:
+                end = test_data.shape[0]
+                break
+            else:
+                end = batch + batch_size
+            batch_data = test_data[batch:end, :]
+            batch_labels = test_labels[batch:end]
+            cost = s.run([loss], feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
+            pred = L.h[L.numLayers].eval(feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
+            print pred[0]
+            predictions.append(pred[0])
+            costT += cost[0]
+            index += 1
+        costT /= index
+        predictions = np.asarray(predictions)
+        np.savetxt(predictions_save_path, predictions, fmt="%1.4f")
+        print "test cost =", costT[0]
 
 #############################################################################################################
 
