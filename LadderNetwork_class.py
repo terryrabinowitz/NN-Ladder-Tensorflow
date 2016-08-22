@@ -5,9 +5,8 @@ import tensorflow as tf
 
 # Global variables.
 batch_size = 100
-num_epochs=10
-lr = .00001
-
+num_epochs=20
+lr = .00005
 
 class Ladder(object):
     def __init__(self, trainData, trainLabels, valData, valLabels):
@@ -23,9 +22,9 @@ class Ladder(object):
         return self.numClasses
 
 class DenseLadder(Ladder):
-    def __init__(self, trainData, trainLabels, valData, valLabels, numLayers, numHidden):
+    def __init__(self, trainData, trainLabels, valData, valLabels, numHidden):
         Ladder.__init__(self, trainData, trainLabels, valData, valLabels)
-        self.numLayers = numLayers
+        self.numLayers = len(numHidden)
         self.numHidden = numHidden
         if self.trainData.ndim > 2:
             self.trainData = np.reshape(self.trainData, [self.numTrain, -1])
@@ -66,7 +65,10 @@ class DenseLadder(Ladder):
                     self.z.append(tf.nn.batch_normalization(tf.matmul(self.h[i-1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
                     self.h.append(tf.nn.relu(tf.add(self.z[i], B)))
 
-    def encoder_decoder(self, x, y, noiseMean, noiseStdDev):
+        self.loss_supervised = -tf.reduce_mean(y * tf.log(self.h[self.numLayers]) + (1 - y) * tf.log(1 - self.h[self.numLayers]))
+        self.train_step_supervised = tf.train.AdamOptimizer(lr).minimize(self.loss_supervised)
+
+    def encoder(self, x, y, noiseMean, noiseStdDev):
         with tf.variable_scope("feedforward", reuse=True):
             print "encode"
             for i in range(self.numLayers + 1):
@@ -93,17 +95,21 @@ class DenseLadder(Ladder):
                     self.h_noise.append(tf.nn.relu(tf.add(self.z[i], tf.add(B, n))))
                 elif i == self.numLayers:
                     n = tf.random_normal(shape=tf.shape(B), mean=noiseMean, stddev=noiseStdDev)
-                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(self.h[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
+                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(self.h_noise[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
                     self.h_noise.append(tf.nn.sigmoid(tf.add(self.z[i], tf.add(B, n))))
                 else:
                     n = tf.random_normal(shape=tf.shape(B), mean=noiseMean, stddev=noiseStdDev)
-                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(self.h[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
+                    self.z_noise.append(tf.nn.batch_normalization(tf.matmul(self.h_noise[i - 1], W), mean=0, variance=1, variance_epsilon=1e-9, offset=None, scale=None))
                     self.h_noise.append(tf.nn.relu(tf.add(self.z[i], tf.add(B, n))))
 
+            lossSupervised_noise = -tf.reduce_mean(y * tf.log(self.h_noise[self.numLayers]) + (1 - y) * tf.log(1 - self.h_noise[self.numLayers]))
+            self.loss_supervised_noise = lossSupervised_noise
+            self.train_step_supervised_noise = tf.train.AdamOptimizer(lr).minimize(self.loss_supervised_noise)
+
+    def decoder(self):
         with tf.variable_scope("decoder"):
             print "decode"
             self.z_recon = [None]*len(self.z_noise)
-            self.h_recon = [None]*len(self.h_noise)
             self.diff = tf.constant(0.0,dtype=np.float32)
             for i in range(self.numLayers, -1, -1):
                 print i
@@ -126,7 +132,7 @@ class DenseLadder(Ladder):
                     b = tf.get_variable(string, shape=[self.numClasses], initializer=tf.constant_initializer(1.0))
                     string = 'c' + str(i)
                     c = tf.get_variable(string, shape=[4, self.numClasses], initializer=tf.constant_initializer(1.0))
-                    mu = tf.nn.batch_normalization(self.h[i], mean=0, variance=1, offset=None, scale=None, variance_epsilon=1e-9)
+                    mu = tf.nn.batch_normalization(self.h_noise[i], mean=0, variance=1, offset=None, scale=None, variance_epsilon=1e-9)
                     string = 'weight' + str(i)
                     V = tf.get_variable(name=string, shape=[self.numClasses, self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
                 else:
@@ -141,7 +147,6 @@ class DenseLadder(Ladder):
                     string = 'weight' + str(i)
                     V = tf.get_variable(name=string, shape=[self.numHidden[i], self.numHidden[i-1]], initializer=tf.contrib.layers.xavier_initializer())
 
-
                 e = tf.transpose(tf.pack([I, self.z_noise[i], mu, tf.mul(self.z_noise[i], mu)]), [1, 0, 2])
                 part1 = tf.reduce_sum(tf.mul(a, e), 1)
                 part2 = tf.mul(b, tf.nn.sigmoid(tf.reduce_sum(tf.mul(c, e), 1)))
@@ -152,16 +157,27 @@ class DenseLadder(Ladder):
 
                 #print tf.Tensor.get_shape(tf.mul(self.z_recon[i], tf.ones(tf.shape(self.z_recon[i]))))
 
-        lossSupervised = -tf.reduce_mean(y * tf.log(self.h[self.numLayers]) + (1 - y) * tf.log(1 - self.h[self.numLayers]))
-        lossUnsupervised = tf.div(self.diff, tf.to_float(tf.shape(self.h[self.numLayers])[0]))
-        self.loss = tf.add(lossSupervised, lossUnsupervised)
+        lossUnsupervised_noise = tf.div(self.diff, tf.to_float(tf.shape(self.h_noise[self.numLayers])[0]))
+        self.loss = tf.add(self.lossSupervised_noise, lossUnsupervised_noise)
         self.train_step = tf.train.AdamOptimizer(lr).minimize(self.loss)
 
     def get_loss(self):
         return self.loss
 
+    def get_loss_supervised(self):
+        return self.loss_supervised
+
+    def get_loss_supervised_noise(self):
+        return self.loss_supervised_noise
+
     def get_train_step(self):
         return self.train_step
+
+    def get_train_step_supervised(self):
+        return self.train_step_supervised
+
+    def get_train_step_supervised_noise(self):
+        return self.train_step_supervised_noise
 
     def get_size(self):
         return self.inputSize
@@ -193,17 +209,23 @@ def main(argv=None):
     nnTypes = ['dense','convolution','recurrent']
     nnType = nnTypes[0]
     if nnType.startswith('d'):
-        numLayers = 4
-        numHidden = [200, 250, 300, 350]
+        numHidden = [4000, 2000, 2000, 2000, 2000, 2000, 2000]
+        noiseMean = 0.0
+        noiseStdDev = 0.3
 
-        L = DenseLadder(train_data, train_labels, val_data, val_labels, numLayers, numHidden)
-
+        L = DenseLadder(train_data, train_labels, val_data, val_labels, numHidden)
         x = tf.placeholder(tf.float32, shape=[batch_size, L.get_size()])
         y = tf.placeholder(tf.float32, shape=[batch_size, L.get_classes()])
         L.feed_forward(x, y)
-        L.encoder_decoder(x, y, noiseMean=0, noiseStdDev=0.2)
+        L.encoder(x, y, noiseMean=noiseMean, noiseStdDev=noiseStdDev)
+        L.decoder()
+        
         loss = L.get_loss()
+        #loss = L.get_loss_supervised()
+        #loss = L.get_loss_supervised_noise()
         train_step = L.get_train_step()
+        #train_step = L.get_train_step_supervised()
+        #train_step = L.get_train_step_supervised_noise()
 
         best_val_loss = 10000
         with tf.Session() as s:
@@ -232,11 +254,11 @@ def main(argv=None):
                     batch_data = L.valData[batch:end, :]
                     batch_labels = L.valLabels[batch:end]
                     cost = s.run(loss, feed_dict={x: batch_data, y: batch_labels, dropout_keep_prob: 1.0})
-                    costT += cost[0]
+                    costT += cost
                     index += 1
                 costT /= index
                 print
-                print "val costs =", costT
+                print "val cost =", costT
                 if costT < best_val_loss:
                     saver.save(s, model_path)
                     best_val_loss = costT
@@ -265,8 +287,7 @@ def main(argv=None):
             costT /= index
             predictions = np.asarray(predictions)
             np.savetxt(predictions_save_path, predictions, fmt="%1.4f")
-            print "test cost=", costT[0]
-
+            print "test cost =", costT[0]
 
 #############################################################################################################
 
