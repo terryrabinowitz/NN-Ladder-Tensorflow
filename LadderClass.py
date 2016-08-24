@@ -32,6 +32,7 @@ class ConvLadder(Ladder):
         self.h = []
         self.z_noise = []
         self.h_noise = []
+        self.diff=0.0
 
         # kernal_shape1 = [4, 17, 1, 300]  # height, width, num_input channels, num_output channels(kernals)
         # kernal_shape2 = [1, 7, kernal_shape1[3], 100]  # height, width, num_input channels, num_output channels(kernals)
@@ -173,9 +174,8 @@ class DenseLadder(Ladder):
                     self.z_noise.append(tf.add(z_noise, n))
                     self.h_noise.append(tf.nn.relu(tf.add(self.z_noise[i], B)))
 
-            lossSupervised_noise = -tf.reduce_mean(y * tf.log(self.h_noise[self.numLayers+1]) + (1 - y) * tf.log(1 - self.h_noise[self.numLayers+1]))
-            self.loss_supervised_noise = lossSupervised_noise
-            #_loss_summary(self.loss_supervised_noise)
+            self.loss_supervised_noise = -tf.reduce_mean(y * tf.log(self.h_noise[self.numLayers+1]) + (1 - y) * tf.log(1 - self.h_noise[self.numLayers+1]))
+            self.loss_supervised_noise = tf.mul(self.lambdaSupervised, self.loss_supervised_noise)
             self.train_step_supervised_noise = tf.train.AdamOptimizer(self.lr).minimize(self.loss_supervised_noise)
 
     def decoder(self):
@@ -229,21 +229,24 @@ class DenseLadder(Ladder):
                     string = 'weight' + str(i)
                     V = tf.get_variable(name=string, shape=[self.numHidden[i-1], self.numHidden[i-2]], initializer=tf.contrib.layers.xavier_initializer())
 
-                #print "V", tf.Tensor.get_shape(tf.mul(V, tf.ones(tf.shape(V))))
+                #print "diff", tf.Tensor.get_shape(tf.mul((diff), tf.ones(tf.shape((diff)))))
+
 
                 e = tf.transpose(tf.pack([I, self.z_noise[i], mu, tf.mul(self.z_noise[i], mu)]), [1, 0, 2])
                 part1 = tf.reduce_sum(tf.mul(a, e), 1)
                 part2 = tf.mul(b, tf.nn.sigmoid(tf.reduce_sum(tf.mul(c, e), 1)))
                 self.z_recon[i] = tf.add(part1, part2)
-                string = 'lambda' + str(i)
                 lam = self.lambdas[i]
-                self.diff = tf.add(self.diff,tf.div(tf.mul(lam, tf.reduce_sum(tf.squared_difference(self.z[i], self.z_recon[i]))), tf.to_float(tf.shape(self.z[i]))[1]))  # lambda * (sum||(z1-z1_n)||^2 ) / (layerWidth * numSamples)
 
+                # lambda * (sum||(z1-z1_n)||^2 ) / (layerWidth * numSamples)
+                diff = tf.squared_difference(self.z[i], self.z_recon[i])
+                diff = tf.mul(lam, tf.reduce_sum(diff))
+                diff = tf.div(diff, tf.to_float(tf.shape(self.z[i]))[1])  #divide by number of nodes in layer
+                diff = tf.div(diff, tf.to_float(self.batch_size))  #divide by batch size
+                self.diff = tf.add(self.diff, diff)
 
-        loss_unsupervised_noise = tf.div(self.diff, tf.to_float(tf.shape(self.h_noise[self.numLayers])[0]))
-        #_loss_summary(loss_unsupervised_noise)
-        self.loss = tf.add(tf.mul(self.lambdaSupervised, self.loss_supervised_noise), loss_unsupervised_noise)
-        #_loss_summary(self.loss)
+        self.loss_unsupervised_noise = self.diff
+        self.loss = tf.add(self.loss_supervised_noise, self.loss_unsupervised_noise)
         self.train_step = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
     def get_loss(self):

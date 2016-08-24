@@ -16,10 +16,10 @@ def _loss_summary(x):
 
 def main(argv=None):
     batch_size = 500
-    num_epochs = 50
-    lr = .0003
-    lambdaSupervised = 100.0
-    lambdas = [500.0, 100.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    num_epochs = 1
+    lr = .0001
+    lambdaSupervised = 10.0
+    lambdas = [1.0, 1.0, 1.0]
     # unsupervised loss coefficients:  first index is input layer, last index is output layer, the rest are the hidden/convolution layers
 
     noiseMean = 0.0
@@ -59,7 +59,7 @@ def main(argv=None):
     nnTypes = ['dense','convolution','recurrent']
     nnType = nnTypes[0]
     if nnType.startswith('d'):
-        numHidden = [4000, 2000, 2000, 2000, 2000, 1000] #the number of nodes in each hidden layer
+        numHidden = [1000] #the number of nodes in each hidden layer
 
         L = DenseLadder(train_data, train_labels, val_data, val_labels, numHidden, lambdas, lr, batch_size, lambdaSupervised)
         x = tf.placeholder(tf.float32, shape=[batch_size, L.get_size()])
@@ -67,12 +67,12 @@ def main(argv=None):
         L.feed_forward(x, y)
         L.encoder(x, y, noiseMean=noiseMean, noiseStdDev=noiseStdDev)
         L.decoder()
-        loss = L.get_loss()                                 #ff, encoder, decoder
-        #loss = L.get_loss_supervised()                     #ff
-        #loss = L.get_loss_supervised_noise()               #encoder
-        train_step = L.get_train_step()                     #ff, encoder, decoder
-        #train_step = L.get_train_step_supervised()         #ff
-        #train_step = L.get_train_step_supervised_noise()   #encoder
+        lossSN = L.loss_supervised_noise
+        lossUN = L.loss_unsupervised_noise
+        loss = L.get_loss()                                 #total
+        train_step = L.get_train_step()                     #total
+        #train_step = L.get_train_step_supervised()
+        #train_step = L.get_train_step_supervised_noise()
     if nnType.startswith('c'):
         numConv = [500,500,500]
         numFilters = [(15,4),(10,4),(7,4)]
@@ -100,9 +100,9 @@ def main(argv=None):
                     end = batch + batch_size
                 batch_data = L.trainData[batch:end, :]
                 batch_labels = L.trainLabels[batch:end]
-                _, cost = s.run([train_step, loss], feed_dict={x: batch_data, y: batch_labels})
+                _, cost, costSN, costUN = s.run([train_step, loss, lossSN, lossUN], feed_dict={x: batch_data, y: batch_labels})
                 #train_writer.add_summary(summary, batch)
-                print cost
+                print cost, costSN, costUN
             index = 0
             costT = 0
             for batch in xrange(0, L.numVal, batch_size):
